@@ -1,0 +1,120 @@
+<html>
+
+<head>
+    <!-- <script src="https://cdn.socket.io/4.7.3/socket.io.min.js"  crossorigin="anonymous"></script> -->
+    <script src="/socket.io.js"></script>
+    <title>file share app</title>
+</head>
+
+<body>
+    <div id="wrapper">
+        select file : <input id="target-file" type="file" />
+        <br>
+        <button id="share-btn"> share </button>
+        <br>
+        <div id="text">link will show hear</div>
+        <br>
+        <button id="download-btn" style="display: none;">download file</button>
+    </div>
+</body>
+<script>
+    const socket = io();
+    const wrapper = document.getElementById('wrapper');
+    const shareBtn = document.getElementById('share-btn');
+    const input = document.getElementById("target-file");
+    const text = document.getElementById("text");
+    const downloadBtn = document.getElementById("download-btn");
+
+    shareBtn.addEventListener('click', () => {
+        console.log(input.files)
+        const file = input.files?.[0]
+        console.log({ file })
+        console.log(file.name)
+        socket.emit('share', { file: file.name, size: Math.ceil(file.size) })
+    })
+
+    socket.on('file-id', (data) => {
+        console.log({ data })
+        wrapper.setAttribute('data-file-id', data.fileId)
+    });
+
+
+    socket.on('start-download', () => {
+        console.log(` --- sending chunks --- `)
+        const reader = new FileReader();
+
+        reader.onload = () => {
+            let buffer = new Uint8Array(reader.result);
+            console.log({ 'buffer.length': buffer.length })
+            let initialChunk = 0;
+
+            while (initialChunk < buffer.length) {
+                const chunk = buffer.slice(0, 1024);
+                console.log(` --- sending chunk ${initialChunk} --- `)
+                socket.emit('file-chunk', { fileId: wrapper.getAttribute("data-file-id"), chunk });
+                initialChunk += 1024;
+            }
+        }
+
+        reader.readAsArrayBuffer(input.files?.[0]);
+    });
+
+    // downloader part 
+    const searchParams = new URLSearchParams(window.location.search);
+    const fileId = searchParams.get("file-id");
+    let downloadBuffer = new Int8Array();
+    let fileName = '';
+
+    if (fileId) {
+        let fileSize = 0
+        socket.emit("show-file", { fileId })
+        socket.on("file-found", (data) => {
+            console.dir({'file-found' : data})
+            text.innerHTML = `file : ${data.file}`
+            fileName = data.file
+            downloadBtn.style.display = 'block'
+            fileSize = data.size
+        });
+
+
+        socket.on('file-chunk', (data) => {
+            console.log({data})
+            downloadBuffer.push(new Int8Array(data.chunk))
+            // downloadBuffer = new Int8Array([...downloadBuffer,...new Int8Array( data.chunk)])
+            // downloadBuffer = downloadBuffer.concat(new Int8Array(data.chunk))
+            console.log(downloadBuffer.length ,fileSize)
+            if (downloadBuffer.length >= fileSize) {
+                console.log(downloadBuffer)
+                console.log(typeof(downloadBuffer))
+                const blobUrl = URL.createObjectURL( new Blob( downloadBuffer));
+                // const blobUrl = URL.createObjectURL( new Blob( downloadBuffer,{type:"jpg"}));
+
+                const link = document.createElement("a");
+
+                link.href = blobUrl;
+                link.download = fileName;
+                document.body.appendChild(link);
+
+                link.dispatchEvent(
+                    new MouseEvent('click', {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window
+                    })
+                );
+
+                document.body.removeChild(link);
+            }
+        })
+    };
+
+
+    downloadBtn.addEventListener('click', () => {
+        console.log(` --- download request --- `)
+        socket.emit('start-download', { fileId })
+    });
+
+
+</script>
+
+</html>
